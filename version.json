@@ -1,0 +1,6 @@
+{
+    "version": "1",
+    "display": "0.1",
+    "file": "A-Team-Android_Root_Patcher-v0.1.7z",
+    "changelog": "- Initial testing build.\n- Cross-platform PySide6 interface.\n- Modular Magisk and KernelSU engines.\n- Preserved Magisk 31.1 assets.\n- Full application updater."
+}
