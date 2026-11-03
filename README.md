@@ -77,8 +77,8 @@ The local configuration is `app/config/config.json`:
 
 ```json
 {
-    "version": "1",
-    "display": "0.8",
+    "version": "2",
+    "display": "1.0",
     "kernelsu_version": "3.3.1",
     "magisk_version": "31.1"
 }
@@ -90,7 +90,7 @@ The local configuration is `app/config/config.json`:
 
 The updater compares the local `version` against the `version` field in the repository's `Updates/version.json`. The remote `display` value is the release's user-facing version. The update manifest also supplies the archive filename and changelog.
 
-The release archive should contain the project root, including `app/`, launchers, documentation, and `Updates/`. The manifest and matching release archive must be published to GitHub before online updating can succeed.
+The release archive should contain the project root, including `app/`, launchers, documentation, and `Updates/`. The manifest and matching `.7z` release archive must be published to GitHub before online updating can succeed. When a newer version is found, the app asks whether to accept or decline it. If accepted, it downloads and extracts the 7z package, applies the update after the current process closes, and automatically relaunches the application. If declined, no package is downloaded. The updater uses `py7zr` (minimum 1.0.0) and can fall back to an installed 7-Zip command-line extractor.
 
 
 ## Project layout

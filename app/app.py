@@ -147,72 +147,154 @@ class KernelSUEngine:
             log(f"Staged KernelSU image copied to requested output: {output}")
         return output
 
-class UpdateJob(QThread):
-    completed=Signal(bool,str)
-    progress=Signal(str)
+
+def _friendly_error(exc):
+    """Render subprocess/decoder errors without Python's bytes repr (for example b'\\n')."""
+    def clean(value):
+        if isinstance(value, bytes):
+            return value.decode("utf-8", errors="replace").strip()
+        if isinstance(value, (tuple, list)):
+            return "; ".join(part for part in (clean(item) for item in value) if part)
+        return str(value).strip()
+    return clean(exc) or exc.__class__.__name__
+
+
+class UpdateCheckJob(QThread):
+    available = Signal(str, str, str)
+    completed = Signal(bool, str)
+
     def run(self):
         try:
-            import requests
-            self.progress.emit("Fetching Updates/version.json…")
-            response=requests.get(VERSION_URL,timeout=25)
+            response = requests.get(VERSION_URL, timeout=25)
             response.raise_for_status()
-            manifest=response.json()
-            version=str(manifest.get("version","")).strip()
-            filename=str(manifest.get("file","")).strip()
-            if not version or not filename:
-                raise RuntimeError("Update manifest is missing display or file.")
-            display_version=str(manifest.get("display","")).strip()
-            if not display_version:
-                raise RuntimeError("Update manifest is missing display.")
-            self.progress.emit("Latest version: "+display_version)
-            if version==VERSION:
-                self.completed.emit(True,"Already running the latest version.")
-                return
+            manifest = response.json()
+            version = str(manifest.get("version", "")).strip()
+            filename = str(manifest.get("file", "")).strip()
+            display = str(manifest.get("display", "")).strip()
+            if not version or not filename or not display:
+                raise RuntimeError("The update manifest is missing version, display, or file.")
             if not filename.lower().endswith(".7z"):
-                raise RuntimeError("Expected the full .7z application package specified by the manifest.")
-            data_dir=Path.home()/".ateam-root-patcher"
-            data_dir.mkdir(parents=True,exist_ok=True)
-            archive=data_dir/filename
-            url="https://github.com/PizzaG/A-Team-Android_Root_Patcher/raw/refs/heads/main/"+filename
-            self.progress.emit("Downloading complete application package…")
-            with requests.get(url,stream=True,timeout=120) as download:
-                download.raise_for_status()
-                with archive.open("wb") as output:
-                    for chunk in download.iter_content(1024*1024):
-                        if chunk:
-                            output.write(chunk)
+                raise RuntimeError("The release manifest must point to a .7z application package.")
+            if version == VERSION:
+                self.completed.emit(True, f"Already running the latest version ({display}).")
+                return
+            self.available.emit(version, display, filename)
+        except Exception as exc:
+            self.completed.emit(False, _friendly_error(exc))
+
+
+class UpdateInstallJob(QThread):
+    completed = Signal(bool, str)
+    progress = Signal(str)
+
+    def __init__(self, version, display, filename):
+        super().__init__()
+        self.version = version
+        self.display = display
+        self.filename = filename
+
+    def run(self):
+        try:
             try:
                 import py7zr
-            except ImportError:
-                raise RuntimeError("Install py7zr to unpack update archives: pip install py7zr")
-            staging=data_dir/"update-staging"
+            except ImportError as exc:
+                raise RuntimeError("The 7z extractor is missing. Reopen the launcher so it can install app/requirements.txt.") from exc
+
+            data_dir = Path.home() / ".ateam-root-patcher"
+            data_dir.mkdir(parents=True, exist_ok=True)
+            archive = data_dir / self.filename
+            url = "https://github.com/PizzaG/A-Team-Android_Root_Patcher/raw/refs/heads/main/" + self.filename
+            self.progress.emit("Downloading the 7z update package…")
+            with requests.get(url, stream=True, timeout=180) as download:
+                download.raise_for_status()
+                with archive.open("wb") as output:
+                    for chunk in download.iter_content(1024 * 1024):
+                        if chunk:
+                            output.write(chunk)
+
+            staging = data_dir / "update-staging"
             if staging.exists():
                 shutil.rmtree(staging)
-            staging.mkdir()
-            with py7zr.SevenZipFile(archive,"r") as package:
-                package.extractall(staging)
-            entries=list(staging.iterdir())
-            if len(entries)==1 and entries[0].is_dir():
-                staging=entries[0]
-            updater=data_dir/("apply-update.bat" if os.name=="nt" else "apply-update.sh")
-            destination=PROJECT_ROOT.resolve()
-            if os.name=="nt":
-                updater.write_text(
-                    '@echo off\r\n'
-                    'timeout /t 2 /nobreak >nul\r\n'
-                    f'robocopy "{staging}" "{destination}" /MIR /XD .git .venv app\\.venv data output logs app\\data app\\output app\\logs\r\n'
-                    f'start "" "{destination / "run-windows.bat"}"\r\n'
+            staging.mkdir(parents=True)
+            self.progress.emit("Extracting the 7z package…")
+            # The release is a 7z archive, not a ZIP. py7zr is the required
+            # extractor; pass an explicit output path and reject unsafe paths.
+            extraction_error = None
+            try:
+                with py7zr.SevenZipFile(archive, mode="r") as package:
+                    for member in package.getnames():
+                        member_path = (staging / member).resolve()
+                        if member_path != staging.resolve() and staging.resolve() not in member_path.parents:
+                            raise RuntimeError("The update archive contains an unsafe path: " + member)
+                    package.extractall(path=staging)
+            except Exception as exc:
+                extraction_error = _friendly_error(exc)
+                # A current 7z command-line extractor can handle codecs that
+                # may not be supported by an older Python extractor build.
+                extractor = next((shutil.which(name) for name in ("7z", "7zz", "7za") if shutil.which(name)), None)
+                if not extractor:
+                    raise RuntimeError(
+                        "Could not extract the 7z update package. "
+                        "Update py7zr (the launcher installs py7zr>=1.0.0) or install 7-Zip. "
+                        f"Extractor detail: {extraction_error}"
+                    ) from exc
+                shutil.rmtree(staging, ignore_errors=True)
+                staging.mkdir(parents=True, exist_ok=True)
+                result = subprocess.run(
+                    [extractor, "x", "-y", f"-o{staging}", str(archive)],
+                    capture_output=True, text=True, errors="replace", timeout=300
                 )
-            else:
-                updater.write_text(
-                    '#!/bin/sh\nsleep 2\n'
-                    f'rsync -a --delete --exclude=.git --exclude=.venv --exclude=app/.venv --exclude=data --exclude=output --exclude=logs --exclude=app/data --exclude=app/output --exclude=app/logs "{staging}/" "{destination}/"\n'
-                    f'exec "{destination / "run-linux.sh"}"\n'
-                )
-                updater.chmod(0o755)
-            self.completed.emit(True,f"Version {display_version} downloaded and staged. Close the app and run {updater} to apply the full update.")
+                if result.returncode != 0:
+                    detail = result.stderr.strip() or result.stdout.strip() or extraction_error
+                    raise RuntimeError("7-Zip extraction failed: " + detail)
+
+            entries = list(staging.iterdir())
+            if len(entries) == 1 and entries[0].is_dir():
+                staging = entries[0]
+            if not (staging / "app" / "app.py").is_file():
+                raise RuntimeError("The downloaded 7z package does not contain the expected app/app.py layout.")
+
+            destination = PROJECT_ROOT.resolve()
+            helper = data_dir / "apply_update.py"
+            helper.write_text(
+                "import os, shutil, subprocess, sys, time\\n"
+                "from pathlib import Path\\n"
+                f"SOURCE = Path({str(staging)!r})\\n"
+                f"DEST = Path({str(destination)!r})\\n"
+                f"PID = {os.getpid()}\\n"
+                "while True:\\n"
+                "    try: os.kill(PID, 0)\\n"
+                "    except OSError: break\\n"
+                "    time.sleep(0.5)\\n"
+                "ignore = shutil.ignore_patterns('.git', '.venv', 'logs', 'data', 'output', '__pycache__')\\n"
+                "shutil.copytree(SOURCE, DEST, dirs_exist_ok=True, ignore=ignore)\\n"
+                "if os.name == 'nt':\\n"
+                "    subprocess.Popen(['cmd.exe', '/c', 'start', '', str(DEST / 'run-windows.bat')], "
+                "creationflags=getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0) | getattr(subprocess, 'DETACHED_PROCESS', 0))\\n"
+                "else:\\n"
+                "    launcher = DEST / 'run-linux.sh'\\n"
+                "    launcher.chmod(launcher.stat().st_mode | 0o111)\\n"
+                "    subprocess.Popen([str(launcher)], cwd=str(DEST), start_new_session=True, "
+                "stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\\n",
+                encoding="utf-8"
+            )
+            self.progress.emit("Update extracted. Closing and restarting the application…")
+            flags = 0
+            if os.name == "nt":
+                flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | getattr(subprocess, "DETACHED_PROCESS", 0)
+            subprocess.Popen(
+                [sys.executable, str(helper)],
+                cwd=str(data_dir),
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                close_fds=True,
+                start_new_session=(os.name != "nt"),
+                creationflags=flags
+            )
+            self.completed.emit(True, f"Version {self.display} is ready. The app will close, update, and restart automatically.")
         except Exception as exc:
-            self.completed.emit(False,str(exc))
+            self.completed.emit(False, _friendly_error(exc))
 
 class MainWindow(QMainWindow):
     # Worker threads emit log text through this Qt signal; Qt queues the
@@ -588,13 +670,42 @@ $sc.Save()"""
 
     def check_updates(self):
         self.log_line("Checking GitHub version manifest…")
-        self.updater=UpdateJob()
-        self.updater.progress.connect(self.log_line)
-        self.updater.completed.connect(self.update_finished)
-        self.updater.start()
-    def update_finished(self,success,message):
+        self.update_check_job = UpdateCheckJob()
+        self.update_check_job.available.connect(self.confirm_update)
+        self.update_check_job.completed.connect(self.update_check_finished)
+        self.update_check_job.start()
+
+    def update_check_finished(self, success, message):
         self.log_line(message)
-        (QMessageBox.information if success else QMessageBox.warning)(self,"Updater",message)
+        (QMessageBox.information if success else QMessageBox.warning)(self, "Updater", message)
+
+    def confirm_update(self, version, display, filename):
+        answer = QMessageBox.question(
+            self,
+            "Update available",
+            f"A-Team Android Root Patcher {display} is available.\n\n"
+            f"Current version: {DISPLAY_VERSION}\nNew version: {display}\n\n"
+            "Download and install this update now?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.Yes
+        )
+        if answer != QMessageBox.Yes:
+            self.log_line(f"Update to {display} declined by user.")
+            return
+
+        self.log_line(f"User accepted update to {display}.")
+        self.update_install_job = UpdateInstallJob(version, display, filename)
+        self.update_install_job.progress.connect(self.log_line)
+        self.update_install_job.completed.connect(self.update_install_finished)
+        self.update_install_job.start()
+
+    def update_install_finished(self, success, message):
+        self.log_line(message)
+        if success:
+            QMessageBox.information(self, "Applying update", message)
+            self.close()
+        else:
+            QMessageBox.warning(self, "Updater", message)
 
 if __name__=="__main__":
     application=QApplication(sys.argv)
