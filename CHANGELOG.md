@@ -4,6 +4,10 @@
 - Added an update confirmation prompt so users can accept or decline an available release before downloading it.
 - Automated update installation: after acceptance, the updater downloads and extracts the package, closes the current app, applies the update, and relaunches the application on Windows or Linux.
 - Raised the minimum `py7zr` version so existing installations receive a compatible 7z extractor.
+- Fixed the update handoff helper: it now generates a valid Python script with real line breaks, waits for the main application to exit, applies the extracted files, and restarts the platform launcher.
+- Added `~/.ateam-root-patcher/update-apply.log` diagnostics so update-copy and restart failures are recorded instead of being silently discarded.
+- Added staged-package and installation-path checks before applying an update.
+- Bumped the internal updater comparison version to distinguish this corrected v1.1 build while retaining the displayed version `1.1`.
 - Release v1.1
 
 ## v1.0

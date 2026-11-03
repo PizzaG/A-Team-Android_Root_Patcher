@@ -256,28 +256,73 @@ class UpdateInstallJob(QThread):
 
             destination = PROJECT_ROOT.resolve()
             helper = data_dir / "apply_update.py"
-            helper.write_text(
-                "import os, shutil, subprocess, sys, time\\n"
-                "from pathlib import Path\\n"
-                f"SOURCE = Path({str(staging)!r})\\n"
-                f"DEST = Path({str(destination)!r})\\n"
-                f"PID = {os.getpid()}\\n"
-                "while True:\\n"
-                "    try: os.kill(PID, 0)\\n"
-                "    except OSError: break\\n"
-                "    time.sleep(0.5)\\n"
-                "ignore = shutil.ignore_patterns('.git', '.venv', 'logs', 'data', 'output', '__pycache__')\\n"
-                "shutil.copytree(SOURCE, DEST, dirs_exist_ok=True, ignore=ignore)\\n"
-                "if os.name == 'nt':\\n"
-                "    subprocess.Popen(['cmd.exe', '/c', 'start', '', str(DEST / 'run-windows.bat')], "
-                "creationflags=getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0) | getattr(subprocess, 'DETACHED_PROCESS', 0))\\n"
-                "else:\\n"
-                "    launcher = DEST / 'run-linux.sh'\\n"
-                "    launcher.chmod(launcher.stat().st_mode | 0o111)\\n"
-                "    subprocess.Popen([str(launcher)], cwd=str(DEST), start_new_session=True, "
-                "stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\\n",
-                encoding="utf-8"
-            )
+            helper_source = f"""#!/usr/bin/env python3
+import os
+import shutil
+import subprocess
+import sys
+import time
+import traceback
+from pathlib import Path
+
+SOURCE = Path({str(staging)!r})
+DEST = Path({str(destination)!r})
+PARENT_PID = {os.getpid()}
+LOG = Path.home() / ".ateam-root-patcher" / "update-apply.log"
+
+def log(message):
+    LOG.parent.mkdir(parents=True, exist_ok=True)
+    with LOG.open("a", encoding="utf-8") as stream:
+        stream.write(message + "\\n")
+        stream.flush()
+
+try:
+    log("Waiting for the patcher process to exit…")
+    while True:
+        try:
+            os.kill(PARENT_PID, 0)
+        except OSError:
+            break
+        time.sleep(0.5)
+
+    log(f"Applying update from {{SOURCE}} to {{DEST}}")
+    if not (SOURCE / "app" / "app.py").is_file():
+        raise RuntimeError("Staged update is missing app/app.py")
+    if not (DEST / "app").is_dir():
+        raise RuntimeError("Install directory does not contain app/")
+
+    shutil.copytree(
+        SOURCE,
+        DEST,
+        dirs_exist_ok=True,
+        ignore=shutil.ignore_patterns(".git", ".venv", "logs", "data", "output", "__pycache__")
+    )
+
+    if not (DEST / "app" / "app.py").is_file():
+        raise RuntimeError("Updated app/app.py is missing after copy")
+
+    log("Update files copied successfully. Restarting application…")
+    if os.name == "nt":
+        subprocess.Popen(
+            ["cmd.exe", "/c", "start", "", str(DEST / "run-windows.bat")],
+            cwd=str(DEST),
+            creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+                | getattr(subprocess, "DETACHED_PROCESS", 0)
+        )
+    else:
+        launcher = DEST / "run-linux.sh"
+        launcher.chmod(launcher.stat().st_mode | 0o111)
+        subprocess.Popen(
+            [str(launcher)],
+            cwd=str(DEST),
+            start_new_session=True
+        )
+    log("Restart command launched.")
+except Exception:
+    log("UPDATE FAILED:\\n" + traceback.format_exc())
+    raise
+"""
+            helper.write_text(helper_source, encoding="utf-8")
             self.progress.emit("Update extracted. Closing and restarting the application…")
             flags = 0
             if os.name == "nt":

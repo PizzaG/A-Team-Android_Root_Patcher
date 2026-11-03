@@ -77,8 +77,8 @@ The local configuration is `app/config/config.json`:
 
 ```json
 {
-    "version": "2",
-    "display": "1.0",
+    "version": "3",
+    "display": "1.1",
     "kernelsu_version": "3.3.1",
     "magisk_version": "31.1"
 }
@@ -128,3 +128,6 @@ Runtime logs are stored in `app/logs/`:
 For a patching or startup problem, include the relevant logs and the exact image type being processed. For ADB installation problems, also include the output of `adb devices -l` (remove serial numbers if you do not want to share them).
 
 See [PATCHER_ENGINES_README.md](PATCHER_ENGINES_README.md) for engine-specific payload and platform notes.
+
+
+Update handoff diagnostics are written to `~/.ateam-root-patcher/update-apply.log` on Linux and Windows user profiles under `.ateam-root-patcher/update-apply.log`.
