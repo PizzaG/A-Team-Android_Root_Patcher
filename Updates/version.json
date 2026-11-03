@@ -2,5 +2,5 @@
     "version": "2",
     "display": "1.1",
     "file": "A-Team-Android_Root_Patcher-v1.1.7z",
-    "changelog": "- Fixed updater error reporting by decoding byte output into readable text.\n- Added .7z package extraction using py7zr with a native 7-Zip fallback.\n- Added accept/decline confirmation before downloading an update.\n- Automated update installation and application restart on Windows and Linux.\n- Updated the minimum py7zr version for compatible 7z extraction."
+    "changelog": "- Fixed the update handoff helper so its generated Python script contains valid line breaks and can run after the main app exits.\n- Added update-apply.log diagnostics so file-copy or restart failures are no longer hidden.\n- Made the helper verify the staged package and destination before replacing files, then relaunch the platform launcher after applying the update.\n- Bumped the internal updater comparison version while keeping the displayed release at 1.1.\n- Fixed updater error reporting by decoding byte output into readable text.\n- Added .7z package extraction using py7zr with a native 7-Zip fallback.\n- Added accept/decline confirmation before downloading an update.\n- Automated update installation and application restart on Windows and Linux.\n- Updated the minimum py7zr version for compatible 7z extraction."
 }
