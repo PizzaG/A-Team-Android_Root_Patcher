@@ -1,6 +1,6 @@
 {
-    "version": "1",
-    "display": "1.0",
-    "file": "A-Team-Android_Root_Patcher-v1.0.7z",
-    "changelog": "- Initial Release v1.0"
+    "version": "2",
+    "display": "1.1",
+    "file": "A-Team-Android_Root_Patcher-v1.1.7z",
+    "changelog": "- Fixed updater error reporting by decoding byte output into readable text.\n- Added .7z package extraction using py7zr with a native 7-Zip fallback.\n- Added accept/decline confirmation before downloading an update.\n- Automated update installation and application restart on Windows and Linux.\n- Updated the minimum py7zr version for compatible 7z extraction."
 }

@@ -1,3 +1,11 @@
+## v1.1
+- Fixed updater error reporting so byte output such as `b'\\n'` is decoded into readable text instead of being shown as a Python bytes representation.
+- Updated the updater to extract the repository's `.7z` release package using `py7zr`, with a native 7-Zip fallback when available.
+- Added an update confirmation prompt so users can accept or decline an available release before downloading it.
+- Automated update installation: after acceptance, the updater downloads and extracts the package, closes the current app, applies the update, and relaunches the application on Windows or Linux.
+- Raised the minimum `py7zr` version so existing installations receive a compatible 7z extractor.
+- Release v1.1
+
 ## v1.0
 - Initial Release v1.0
 
